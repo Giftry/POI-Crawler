@@ -1,0 +1,99 @@
+"""
+结果查看器组件
+"""
+import streamlit as st
+import pandas as pd
+import matplotlib.pyplot as plt
+from utils.poi_types import get_type_name, get_type_color
+
+
+def render_results():
+    """渲染结果展示区域"""
+    pois = st.session_state.get("pois", [])
+    
+    if not pois:
+        st.info("暂无数据，请先爬取 POI。")
+        return
+    
+    # 统计信息
+    st.subheader("📊 统计概览")
+    st.metric("总 POI 数量", len(pois))
+    
+    # 类型分布
+    type_counts = {}
+    for poi in pois:
+        poi_type = poi.get("major_type", "190000")
+        type_counts[poi_type] = type_counts.get(poi_type, 0) + 1
+    
+    # 表格和图表切换
+    view_mode = st.radio("查看模式", ["数据表格", "类型分布", "混合模式"], horizontal=True)
+    
+    if view_mode in ["数据表格", "混合模式"]:
+        # 数据表格
+        st.subheader("📋 数据表格")
+        df = pd.DataFrame(pois)
+        
+        # 选择显示的列
+        columns_available = [col for col in df.columns if col in [
+            "name", "address", "type_name", "lon", "lat", "typecode", "adname", "pname"
+        ]]
+        
+        default_cols = ["name", "address", "type_name", "lon", "lat"]
+        selected_cols = st.multiselect(
+            "选择要显示的列",
+            columns_available,
+            default=[c for c in default_cols if c in columns_available]
+        )
+        
+        if selected_cols:
+            st.dataframe(df[selected_cols], use_container_width=True)
+    
+    if view_mode in ["类型分布", "混合模式"]:
+        # 类型分布图
+        st.subheader("📈 类型分布")
+        if len(type_counts):
+            fig, ax = plt.subplots(figsize=(10, 6))
+            
+            type_names = [get_type_name(t) for t in type_counts.keys()]
+            colors = [get_type_color(t) for t in type_counts.keys()]
+            values = list(type_counts.values())
+            
+            bars = ax.barh(type_names, values, color=colors)
+            ax.invert_yaxis()
+            ax.set_xlabel("数量")
+            ax.set_title("POI 类型分布")
+            
+            # 添加数值标签
+            for bar, v in zip(bars, values):
+                ax.text(bar.get_width() + 0.5, bar.get_y() + bar.get_height()/2, 
+                       f"{v}", va='center')
+            
+            st.pyplot(fig)
+    
+    # 导出功能
+    st.subheader("💾 导出数据")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        # CSV 导出
+        df = pd.DataFrame(pois)
+        csv = df.to_csv(index=False).encode('utf-8-sig')
+        st.download_button(
+            "📥 导出 CSV",
+            csv,
+            "poi_data.csv",
+            "text/csv",
+            use_container_width=True
+        )
+    
+    with col2:
+        # JSON 导出
+        json_str = pd.DataFrame(pois).to_json(orient='records', force_ascii=False)
+        st.download_button(
+            "📥 导出 JSON",
+            json_str,
+            "poi_data.json",
+            "application/json",
+            use_container_width=True
+        )

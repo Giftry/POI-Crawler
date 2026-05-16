@@ -78,20 +78,45 @@ class GridPolygonCrawler:
     最后合并去重得到完整区域内的POI数据
     """
 
-    def __init__(self, config: Optional[CrawlerConfig] = None):
+    def __init__(self, config: Optional[CrawlerConfig] = None, api_key: Optional[str] = None):
         """
         初始化爬虫
 
         Args:
             config: 爬虫配置，如果不提供则使用默认配置
+            api_key: 高德地图 API Key（便捷初始化参数）
         """
-        self.config = config or CrawlerConfig(api_key="")
+        if api_key and not config:
+            self.config = CrawlerConfig(api_key=api_key)
+        else:
+            self.config = config or CrawlerConfig(api_key="")
         self.progress = CrawlerProgress()
         self._is_paused = False
         self._is_stopped = False
         self._poi_buffer: List[Dict[str, Any]] = []
         self._seen_ids: set = set()
         self._progress_callback: Optional[Callable[[CrawlerProgress], None]] = None
+    
+    def search_by_rectangle(self, min_lon: float, min_lat: float, 
+                          max_lon: float, max_lat: float,
+                          types: Optional[str] = None,
+                          keyword: Optional[str] = None) -> List[Dict[str, Any]]:
+        """
+        基于矩形区域爬取POI（单次调用，不拆分网格）
+        
+        Args:
+            min_lon: 最小经度
+            min_lat: 最小纬度
+            max_lon: 最大经度
+            max_lat: 最大纬度
+            types: POI类型编码
+            keyword: 搜索关键词
+            
+        Returns:
+            POI列表
+        """
+        grid_str = f"{min_lon:.6f},{min_lat:.6f}|{max_lon:.6f},{max_lat:.6f}"
+        return self._fetch_pois_in_grid(grid_str, types, keyword)
 
     def set_progress_callback(self, callback: Callable[[CrawlerProgress], None]):
         """
