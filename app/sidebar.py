@@ -5,9 +5,8 @@ import streamlit as st
 import os
 import tempfile
 import zipfile
-import io
 from utils.poi_types import POI_TYPES, get_type_name
-from utils.shapefile_loader import load_boundary_from_file, load_polygon_string
+from utils.shapefile_loader import load_boundary_from_file, load_polygon_string, ShapefileLoader
 
 
 def extract_shapefile_from_zip(zip_bytes: bytes, temp_dir: str) -> str:
@@ -61,6 +60,7 @@ def render_sidebar():
     
     boundary_coords = None
     bounds = None
+    source_crs = None
     
     if boundary_mode == "加载边界文件":
         st.sidebar.info("📁 支持格式：\n- GeoJSON (.geojson, .json)\n- Shapefile ZIP 压缩包（含 .shp/.shx/.dbf）")
@@ -87,11 +87,21 @@ def render_sidebar():
                     with open(temp_path, "wb") as f:
                         f.write(uploaded_file.getvalue())
                 
+                # 检测原始坐标系
+                loader = ShapefileLoader(temp_path)
+                source_crs = loader.detect_crs()
+                st.sidebar.info(f"📊 检测到坐标系: {source_crs}")
+                st.sidebar.info("🔄 坐标系转换: WGS84 -> GCJ02 (高德地图)")
+                
+                # 获取GCJ02坐标（用于高德API）
                 boundary_coords = load_polygon_string(temp_path, "gcj02")
                 bounds = load_boundary_from_file(temp_path, "gcj02")
                 
+                # 同时获取WGS84坐标（用于可视化）
+                bounds_wgs84 = load_boundary_from_file(temp_path, "wgs84")
+                
                 st.sidebar.success(f"✅ 边界文件加载成功!")
-                st.sidebar.info(f"📍 边界范围: 经度 {bounds[0]:.4f}~{bounds[2]:.4f}, 纬度 {bounds[1]:.4f}~{bounds[3]:.4f}")
+                st.sidebar.info(f"📍 边界范围 (GCJ02):\n经度 {bounds[0]:.4f}~{bounds[2]:.4f}\n纬度 {bounds[1]:.4f}~{bounds[3]:.4f}")
                 
             except Exception as e:
                 st.sidebar.error(f"❌ 加载失败: {str(e)}")
@@ -111,6 +121,7 @@ def render_sidebar():
                 lons = [p[0] for p in coords_list]
                 lats = [p[1] for p in coords_list]
                 bounds = (min(lons), min(lats), max(lons), max(lats))
+                source_crs = "手动输入（请确保坐标系一致）"
                 
             except Exception as e:
                 st.sidebar.error(f"❌ 坐标格式错误: {str(e)}")
@@ -124,7 +135,7 @@ def render_sidebar():
     if select_all:
         selected_types = all_types
     else:
-        default_types = ["010000", "060000", "050000", "110000"]
+        default_types = ["050000", "060000", "110000", "170000"]
         selected_types = st.sidebar.multiselect(
             "选择 POI 类型",
             options=all_types,
@@ -135,12 +146,19 @@ def render_sidebar():
     # 爬取设置
     st.sidebar.subheader("⚙️ 爬取设置")
     
-    grid_size = st.sidebar.slider(
+    grid_size_labels = {
+        0.001: "100米 (超精细)",
+        0.002: "200米 (精细)",
+        0.005: "500米 (标准)",
+        0.01: "1公里 (粗略)",
+        0.02: "2公里 (快速)"
+    }
+    
+    grid_size = st.sidebar.select_slider(
         "网格大小",
-        min_value=0.001,
-        max_value=0.01,
+        options=list(grid_size_labels.keys()),
         value=0.005,
-        step=0.001,
+        format_func=lambda x: grid_size_labels[x],
         help="越小精度越高，但爬取时间越长"
     )
     
@@ -173,7 +191,8 @@ def render_sidebar():
         "grid_size": grid_size,
         "request_interval": request_interval,
         "keyword": keyword,
-        "output_format": output_format
+        "output_format": output_format,
+        "source_crs": source_crs
     }
     
     return config

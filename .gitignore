@@ -1,2 +1,33 @@
 ## 忽略所有输出文件
 output/
+
+## 忽略 notebook（可能包含 API Key 等敏感信息）
+notebook/
+
+## 忽略 Python 缓存
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+
+## 忽略虚拟环境
+venv/
+env/
+.venv/
+
+## 忽略 IDE 配置
+.idea/
+.vscode/
+*.swp
+*.swo
+
+## 忽略敏感配置文件（如果存在）
+# *.env
+# .env
+# config_secrets.py

@@ -11,6 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from crawlers.grid_polygon_crawler import GridPolygonCrawler
 from utils.poi_types import POI_TYPES, get_type_name
+from utils.coordinate_converter import gcj02_to_wgs84
 
 
 def run_crawl(config):
@@ -114,9 +115,14 @@ def run_crawl(config):
                         for poi in results:
                             location = poi.get("location", "")
                             if location and "," in location:
-                                lon, lat = map(float, location.split(","))
-                                poi["lon"] = lon
-                                poi["lat"] = lat
+                                gcj_lon, gcj_lat = map(float, location.split(","))
+                                # 保存原始高德坐标(GCJ02)作为主坐标，用于导出)
+                                poi["lon"] = gcj_lon
+                                poi["lat"] = gcj_lat
+                                # 同时保存用于WGS84用于可视化
+                                wgs_lon, wgs_lat = gcj02_to_wgs84(gcj_lon, gcj_lat)
+                                poi["lon_wgs"] = wgs_lon
+                                poi["lat_wgs"] = wgs_lat
                                 poi["major_type"] = poi_type
                                 poi["type_name"] = type_name
                                 all_pois.append(poi)

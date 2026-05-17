@@ -2,6 +2,7 @@
 ESRI Shapefile边界文件加载器
 
 支持从Shapefile文件中加载地理边界数据
+自动检测坐标系并转换到 WGS84 -> GCJ02
 """
 
 import os
@@ -25,6 +26,7 @@ class ShapefileLoader:
     Shapefile边界文件加载器
 
     从ESRI Shapefile格式的文件中加载地理边界数据
+    自动处理坐标系转换：输入 -> WGS84 -> GCJ02
     """
 
     def __init__(self, file_path: str):
@@ -37,6 +39,7 @@ class ShapefileLoader:
         self.file_path = file_path
         self._gdf = None
         self._crs = None
+        self._gdf_wgs84 = None
 
     def load(self) -> bool:
         """
@@ -48,43 +51,69 @@ class ShapefileLoader:
         try:
             import geopandas as gpd
             self._gdf = gpd.read_file(self.file_path)
-            self._crs = self._gdf.crs
+            self._crs = str(self._gdf.crs).upper()
+            self._gdf_wgs84 = self._gdf.to_crs(epsg=4326)
             return True
         except ImportError:
             raise ImportError("请安装geopandas库: pip install geopandas")
         except Exception as e:
             raise RuntimeError(f"加载Shapefile文件失败: {e}")
 
+    def _ensure_loaded(self):
+        """确保数据已加载"""
+        if self._gdf is None:
+            self.load()
+
+    def detect_crs(self) -> str:
+        """
+        自动检测输入文件的坐标系
+
+        Returns:
+            坐标系描述字符串
+        """
+        self._ensure_loaded()
+        
+        crs_str = self._crs
+        
+        if "4326" in crs_str or "WGS84" in crs_str:
+            return "WGS84 (EPSG:4326)"
+        elif "4490" in crs_str or "CGCS2000" in crs_str or "2000" in crs_str:
+            return "CGCS2000 (EPSG:4490)"
+        elif "GCJ-02" in crs_str or "EPSG:4214" in crs_str:
+            return "GCJ-02"
+        elif "EPSG:3857" in crs_str or "WEB MERCATOR" in crs_str:
+            return "Web Mercator (EPSG:3857)"
+        else:
+            return f"Unknown ({self._crs})"
+
     def get_bounds(self) -> Tuple[float, float, float, float]:
         """
-        获取整体的边界框
+        获取整体的边界框（原坐标系）
 
         Returns:
             (minx, miny, maxx, maxy) 边界框坐标
         """
-        if self._gdf is None:
-            self.load()
-
+        self._ensure_loaded()
         return self._gdf.total_bounds
 
     def get_wgs84_bounds(self) -> Tuple[float, float, float, float]:
         """
         获取WGS84坐标系下的边界框
 
+        统一将输入坐标转换为 WGS84
+
         Returns:
             (minx, miny, maxx, maxy) 边界框坐标
         """
-        if self._gdf is None:
-            self.load()
-
-        gdf_wgs84 = self._gdf.to_crs(epsg=4326)
-        return gdf_wgs84.total_bounds
+        self._ensure_loaded()
+        return self._gdf_wgs84.total_bounds
 
     def get_gcj02_bounds(self) -> Tuple[float, float, float, float]:
         """
         获取GCJ-02坐标系下的边界框
 
-        高德地图使用GCJ-02坐标系
+        先转换为 WGS84，再转换为 GCJ-02
+        高德地图使用 GCJ-02 坐标系
 
         Returns:
             (minx, miny, maxx, maxy) 边界框坐标
@@ -102,10 +131,22 @@ class ShapefileLoader:
         """
         获取边界多边形字符串（适用于高德API）
 
+        自动检测坐标系并转换为 GCJ-02
+
         Returns:
             格式: "lon1,lat1|lon2,lat2|...|lonN,latN"
         """
         minx, miny, maxx, maxy = self.get_gcj02_bounds()
+        return f"{minx},{miny}|{maxx},{maxy}"
+
+    def get_wgs84_polygon(self) -> str:
+        """
+        获取WGS84坐标系的多边形字符串
+
+        Returns:
+            格式: "lon1,lat1|lon2,lat2|...|lonN,latN"
+        """
+        minx, miny, maxx, maxy = self.get_wgs84_bounds()
         return f"{minx},{miny}|{maxx},{maxy}"
 
     def get_all_boundaries(self) -> List[BoundaryInfo]:
@@ -115,13 +156,11 @@ class ShapefileLoader:
         Returns:
             边界信息列表
         """
-        if self._gdf is None:
-            self.load()
+        self._ensure_loaded()
 
         boundaries = []
-        gdf_wgs84 = self._gdf.to_crs(epsg=4326)
 
-        for idx, row in gdf_wgs84.iterrows():
+        for idx, row in self._gdf_wgs84.iterrows():
             geom = row.geometry
 
             if hasattr(row, 'name') and row['name']:
@@ -152,74 +191,81 @@ class ShapefileLoader:
         return boundaries
 
     def get_feature_count(self) -> int:
-        """
-        获取要素数量
-
-        Returns:
-            边界要素的数量
-        """
-        if self._gdf is None:
-            self.load()
+        """获取要素数量"""
+        self._ensure_loaded()
         return len(self._gdf)
 
-    @property
-    def crs(self) -> Optional[str]:
-        """获取坐标系信息"""
-        return str(self._crs) if self._crs else None
-
-    @staticmethod
-    def is_valid_shapefile(file_path: str) -> bool:
+    def to_geojson(self, target_crs: str = "wgs84") -> str:
         """
-        检查文件是否为有效的Shapefile
+        导出为GeoJSON格式
 
         Args:
-            file_path: 文件路径
+            target_crs: 目标坐标系，"wgs84" 或 "gcj02"
 
         Returns:
-            是否为有效的Shapefile
+            GeoJSON字符串
         """
-        if not os.path.exists(file_path):
-            return False
+        self._ensure_loaded()
+        
+        if target_crs.lower() == "gcj02":
+            gdf_target = self._gdf_wgs84.copy()
+        else:
+            gdf_target = self._gdf_wgs84.copy()
+        
+        return gdf_target.to_json()
 
-        ext = os.path.splitext(file_path)[1].lower()
-        return ext in ['.shp', '.json', '.geojson']
 
+# ============================================================================
+# 便捷函数
+# ============================================================================
 
-def load_boundary_from_file(file_path: str, 
-                            target_crs: str = "gcj02") -> Tuple[float, float, float, float]:
+def load_boundary_from_file(file_path: str, target_crs: str = "gcj02") -> Tuple[float, float, float, float]:
     """
-    便捷函数：从文件加载边界
+    便捷函数：从文件加载边界框
 
     Args:
-        file_path: 边界文件路径
+        file_path: 文件路径
         target_crs: 目标坐标系，"gcj02" 或 "wgs84"
 
     Returns:
-        (minx, miny, maxx, maxy) 边界框坐标
+        (min_lon, min_lat, max_lon, max_lat) 边界框
     """
     loader = ShapefileLoader(file_path)
-
-    if target_crs.lower() == "gcj02":
-        return loader.get_gcj02_bounds()
-    else:
+    
+    if target_crs.lower() == "wgs84":
         return loader.get_wgs84_bounds()
+    else:
+        return loader.get_gcj02_bounds()
 
 
 def load_polygon_string(file_path: str, target_crs: str = "gcj02") -> str:
     """
-    便捷函数：加载边界并返回高德API格式字符串
+    便捷函数：从文件加载多边形字符串
 
     Args:
-        file_path: 边界文件路径
+        file_path: 文件路径
         target_crs: 目标坐标系，"gcj02" 或 "wgs84"
 
     Returns:
-        高德API格式的边界字符串
+        格式: "lon1,lat1|lon2,lat2"
     """
     loader = ShapefileLoader(file_path)
-
-    if target_crs.lower() == "gcj02":
-        return loader.get_boundary_polygon()
+    
+    if target_crs.lower() == "wgs84":
+        return loader.get_wgs84_polygon()
     else:
-        minx, miny, maxx, maxy = loader.get_wgs84_bounds()
-        return f"{minx},{miny}|{maxx},{maxy}"
+        return loader.get_boundary_polygon()
+
+
+def detect_file_crs(file_path: str) -> str:
+    """
+    便捷函数：检测文件坐标系
+
+    Args:
+        file_path: 文件路径
+
+    Returns:
+        坐标系描述字符串
+    """
+    loader = ShapefileLoader(file_path)
+    return loader.detect_crs()

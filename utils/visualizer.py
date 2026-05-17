@@ -17,33 +17,87 @@ try:
 except ImportError:
     HAS_POI_TYPES = False
 
+try:
+    from utils.coordinate_converter import gcj02_to_wgs84
+    HAS_COORD_CONVERTER = True
+except ImportError:
+    HAS_COORD_CONVERTER = False
+
+
+def setup_chinese_font():
+    """设置中文字体支持"""
+    import matplotlib
+    matplotlib.use('Agg')
+    
+    available_fonts = [f.name for f in FontProperties().get_size_adjustable() if hasattr(f, 'name')]
+    
+    chinese_fonts = ['SimHei', 'Microsoft YaHei', 'SimSun', 'KaiTi', 'FangSong', 
+                     'Arial Unicode MS', 'DejaVu Sans']
+    
+    for font in chinese_fonts:
+        if font in available_fonts:
+            plt.rcParams['font.sans-serif'] = [font]
+            plt.rcParams['axes.unicode_minus'] = False
+            return True
+    
+    try:
+        import matplotlib.font_manager as fm
+        system_fonts = [f.name for f in fm.fontManager.ttflist]
+        
+        for font in chinese_fonts:
+            if font in system_fonts:
+                plt.rcParams['font.sans-serif'] = [font]
+                plt.rcParams['axes.unicode_minus'] = False
+                return True
+    except:
+        pass
+    
+    plt.rcParams['axes.unicode_minus'] = False
+    return False
+
 
 class CrawlResultVisualizer:
     """
     爬取结果可视化器
 
     用于显示爬取边界和POI点分布，验证爬取位置是否正确
+    自动处理坐标系转换（GCJ02 -> WGS84）
     """
 
     def __init__(self, boundary: Tuple[float, float, float, float] = None,
-                 poi_types_colors: Optional[Dict[str, str]] = None):
+                 poi_types_colors: Optional[Dict[str, str]] = None,
+                 source_coords: str = "gcj02"):
         """
         初始化可视化器
 
         Args:
             boundary: 边界框 (min_lon, min_lat, max_lon, max_lat)
             poi_types_colors: POI类型到颜色的映射
+            source_coords: 源坐标系，"gcj02" 或 "wgs84"，默认 "gcj02"
         """
         self.boundary = boundary
         self.poi_types_colors = poi_types_colors or {}
         self.pois = []
         self.figure = None
         self.ax = None
+        self.source_coords = source_coords
+        
+        setup_chinese_font()
 
         if not HAS_POI_TYPES:
             self.default_colors = plt.cm.tab20.colors
         else:
             self.default_colors = None
+
+    def _convert_coords(self, lon: float, lat: float) -> Tuple[float, float]:
+        """转换坐标到 WGS84"""
+        if self.source_coords.lower() == "wgs84":
+            return lon, lat
+        
+        if HAS_COORD_CONVERTER:
+            return gcj02_to_wgs84(lon, lat)
+        
+        return lon, lat
 
     def add_pois(self, pois: List[Dict[str, Any]]):
         """
@@ -58,9 +112,14 @@ class CrawlResultVisualizer:
             if location and ',' in location:
                 try:
                     lon, lat = map(float, location.split(','))
+                    
+                    lon_wgs, lat_wgs = self._convert_coords(lon, lat)
+                    
                     poi_copy = poi.copy()
-                    poi_copy['lon'] = lon
-                    poi_copy['lat'] = lat
+                    poi_copy['lon'] = lon_wgs
+                    poi_copy['lat'] = lat_wgs
+                    poi_copy['lon_gcj'] = lon
+                    poi_copy['lat_gcj'] = lat
 
                     typecode = poi.get('typecode', '')
                     if typecode and HAS_POI_TYPES:
@@ -153,6 +212,10 @@ class CrawlResultVisualizer:
 
         if show_boundary and self.boundary:
             min_lon, min_lat, max_lon, max_lat = self.boundary
+            
+            min_lon, min_lat = self._convert_coords(min_lon, min_lat)
+            max_lon, max_lat = self._convert_coords(max_lon, max_lat)
+            
             boundary_rect = mpatches.Rectangle(
                 (min_lon, min_lat),
                 max_lon - min_lon,
@@ -166,6 +229,9 @@ class CrawlResultVisualizer:
         margin = 0.002
         if self.boundary:
             min_lon, min_lat, max_lon, max_lat = self.boundary
+            min_lon, min_lat = self._convert_coords(min_lon, min_lat)
+            max_lon, max_lat = self._convert_coords(max_lon, max_lat)
+            
             self.ax.set_xlim(min_lon - margin, max_lon + margin)
             self.ax.set_ylim(min_lat - margin, max_lat + margin)
 
@@ -284,7 +350,8 @@ def visualize_crawl_results(pois: List[Dict[str, Any]],
                           boundary: Tuple[float, float, float, float] = None,
                           title: str = "POI爬取结果验证",
                           output_dir: str = "outputs",
-                          show_plot: bool = True) -> Dict[str, str]:
+                          show_plot: bool = True,
+                          source_coords: str = "gcj02") -> Dict[str, str]:
     """
     便捷函数：可视化爬取结果
 
@@ -294,6 +361,7 @@ def visualize_crawl_results(pois: List[Dict[str, Any]],
         title: 图表标题
         output_dir: 输出目录
         show_plot: 是否显示图形
+        source_coords: 源坐标系，"gcj02" 或 "wgs84"，默认 "gcj02"
 
     Returns:
         输出文件路径字典
@@ -301,7 +369,7 @@ def visualize_crawl_results(pois: List[Dict[str, Any]],
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
 
-    visualizer = CrawlResultVisualizer(boundary=boundary)
+    visualizer = CrawlResultVisualizer(boundary=boundary, source_coords=source_coords)
     visualizer.add_pois(pois)
 
     scatter_path = os.path.join(output_dir, "poi_distribution.png")
