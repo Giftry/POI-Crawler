@@ -1,6 +1,9 @@
-## 忽略所有输出文件
-output/
-
+## 忽略 outputs 目录下生成的数据文件
+outputs/*.csv
+outputs/*.json
+outputs/*.png
+outputs/*.geojson
+inptuts/
 ## 忽略 notebook（可能包含 API Key 等敏感信息）
 notebook/
 
@@ -30,4 +33,5 @@ env/
 ## 忽略敏感配置文件（如果存在）
 # *.env
 # .env
+# config_local.py
 # config_secrets.py
